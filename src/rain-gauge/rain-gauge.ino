@@ -9,7 +9,9 @@
 #include "arduino_secrets.h"
 
 #define INTERRUPT_PIN D2
+#define VOLTAGE_PIN A0
 
+// Without arduino_secrets.h
 #ifndef STASSID
 #define STASSID "your-ssid"
 #define STAPSK "your-ssid-password"
@@ -30,22 +32,48 @@ String clientSecret = CLIENT_SECRET;
 String scope = SCOPE;
 String baseApiUrl = BASE_API_URL;
 
-static int counter = 0; // Used to trigger token refresh about every 30 minutes
-std::list<long> epochs;
-char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-String accessToken = "";
-
 String tokenUrl = "https://login.microsoftonline.com/" + tenantId + "/oauth2/v2.0/token";
 String tokenBody = "grant_type=client_credentials&client_id=" + clientId + "&client_secret=" + clientSecret + "&scope=" + scope;
 String pulseUrl = baseApiUrl + "/kpis/" + hostName + "/pulse";
 String dataUrl = baseApiUrl + "/kpis/" + hostName + "/epochs";
+String voltageUrl = baseApiUrl + "/kpis/" + hostName + "/voltage";
+
+String accessToken = "";
+float voltCalibration = 0.28;
+
+// Using epochs here and conversions in API, just for simplicity
+std::list<long> epochs;
+
+// Main loop delay is 60 seconds, every 60 secoonds upload tip data
+// Each loop increments counter. Bearer tokens have a default expiration of 60 minutes.
+// When count hits 45 (every 45 minutes) refresh bearer token and send voltage data
+int counter = 0;
 
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
 
-static WiFiClientSecure wifiClient;
+void turnOffWifi() {
+  Serial.print("Disconnecting WiFi..");
+  WiFi.mode(WIFI_OFF);
+  while ( WiFi.status() == WL_CONNECTED ) {
+    Serial.print(".");
+    delay(1000);
+  }
+  Serial.println("done");
+}
 
-void getAccessToken(){
+void turnOnWifi() {
+  Serial.print("Connecting to WiFi...");
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  while ( WiFi.status() != WL_CONNECTED ) {
+    delay(1000);
+    Serial.print ( "." );
+  }
+  Serial.println("done");
+}
+
+void refreshAccessToken() {
   Serial.print("Getting access token...");
   std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
   client->setInsecure();
@@ -53,34 +81,17 @@ void getAccessToken(){
   String authJson = "";
 
   https.begin(*client, tokenUrl);
-    while (authJson == ""){
-        int httpCode = https.POST(tokenBody);
-        if (httpCode == HTTP_CODE_OK) {
-          authJson = https.getString();
-          JSONVar authResponse = JSON.parse(authJson);
-          accessToken = (const char*) authResponse["access_token"];
-          Serial.println("done");
-        } else {
-          Serial.println("\nError getting access token: " + (String)httpCode + "");
-        }
-    }
-  https.end();   
-}
-
-void sendPulse() {
-  Serial.print("Sending pulse...");
-  std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
-  client->setInsecure();
-  HTTPClient https;
-  https.begin(*client, pulseUrl);
-    https.addHeader("Authorization", "Bearer " + accessToken);
-    int httpCode = https.POST("");
+  while (authJson == "") {
+    int httpCode = https.POST(tokenBody);
     if (httpCode == HTTP_CODE_OK) {
+      authJson = https.getString();
+      JSONVar authResponse = JSON.parse(authJson);
+      accessToken = (const char*) authResponse["access_token"];
       Serial.println("done");
     } else {
       Serial.println("error!");
-      Serial.println(https.getString());
     }
+  }
   https.end();
 }
 
@@ -95,18 +106,49 @@ void uploadData() {
     client->setInsecure();
     HTTPClient https;
     https.begin(*client, dataUrl);
-      https.addHeader("Content-Type", "application/x-www-form-urlencoded");
-      https.addHeader("Authorization", "Bearer " + accessToken);
-      int httpCode = https.POST(body);
-      if (httpCode == HTTP_CODE_OK) {
-        Serial.println("done");
-        epochs.clear();
-      } else {
-        Serial.println("error!");
-        Serial.println(https.getString());
-      }
+    https.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    https.addHeader("Authorization", "Bearer " + accessToken);
+    int httpCode = https.POST(body);
+    if (httpCode == HTTP_CODE_OK) {
+      Serial.println("done");
+      epochs.clear();
+    } else {
+      Serial.println("error!");
+    }
     https.end();
+  } else {
+    //    Serial.println("No data to upload");
   }
+}
+
+void sendVoltage() {
+  // For ESP8266 from https://amzn.to/3RfLW3z, A0 is
+  // 0 to 1024 for volts of 0 to 3.3
+  // Voltage divider created with two 100k resistors
+  int sensorValue = analogRead(VOLTAGE_PIN);
+  float voltage = 0;
+  int battPercent = 0;
+
+  if (sensorValue > 0) {
+    voltage = ((sensorValue * (3.3 / 1024.0)) * 2) + voltCalibration;
+    battPercent = (voltage - 2.5) * 100 / (4.2 - 2.5);
+  }
+
+  Serial.print("Sending sensor/volt/batt%: " + String(sensorValue) + "/" + String(voltage) + "/" + String(battPercent) + "...");
+  String voltBody = "{ \"epoch\": " + String(timeClient.getEpochTime()) + ", \"value\": " + String(voltage) + ", \"batt\": " + String(battPercent) + " }";
+  std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
+  client->setInsecure();
+  HTTPClient voltHttps;
+  voltHttps.begin(*client, voltageUrl);
+  voltHttps.addHeader("Content-Type", "application/json");
+  voltHttps.addHeader("Authorization", "Bearer " + accessToken);
+  int httpCode = voltHttps.POST(voltBody);
+  if (httpCode == HTTP_CODE_OK) {
+    Serial.println("done");
+  } else {
+    Serial.println("error!");
+  }
+  voltHttps.end();
 }
 
 ICACHE_RAM_ATTR void hallChanged()
@@ -122,44 +164,45 @@ ICACHE_RAM_ATTR void hallChanged()
 
 void setup() {
   Serial.begin(115200);
+  delay(1000);
+
   ArduinoOTA.setHostname(hostName);
-  
-  WiFi.mode(WIFI_STA);
-  Serial.print("Connecting to WiFi...");
-  WiFi.begin(ssid, password);
-  while ( WiFi.status() != WL_CONNECTED ) {
-    delay ( 1000 );
-    Serial.print ( "." );
-  }
-  Serial.print("\n");
-
-  Serial.println("Ready");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-
-  timeClient.begin();
 
   pinMode(INTERRUPT_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), hallChanged, CHANGE);
 
-  pinMode(LED_BUILTIN, OUTPUT);     // Initialize the LED_BUILTIN pin as an output
+  pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
+
+  turnOnWifi();
+
+  // Initialize clock
+  Serial.print ( "Updating clock." );
+  timeClient.begin();
+  int currentEpoch = 0;
+  timeClient.update();
+  while (currentEpoch < 100) {
+    delay(1000);
+    Serial.print ( "." );
+    currentEpoch = timeClient.getEpochTime();
+  }
+  Serial.println("done");
+  Serial.println("Epoch: " + String(currentEpoch));
 }
 
 void loop() {
-  timeClient.update();
-  
+
   if (counter == 0) {
-    getAccessToken();
-    sendPulse();
+    refreshAccessToken();
+    sendVoltage();
   }
 
   uploadData();
-  
+
   counter++;
-  if(counter >= 60) {
+  if (counter >= 45) {
     counter = 0;
   }
-  
-  delay(30000);
+
+  delay(60000);
 }
