@@ -1,5 +1,8 @@
 # Rain Gauge BOM
 ![](images/Rain%20Gauge.png)
+
+As an Amazon Associate I earn from qualifying purchases. The products in the links below will not cost you any more than normally. However, using these links helps support this and other projects. Thank you!
+
 |Image|Number|Quantity|Description|
 |-|-|-|-|
 |![](images/18650%20Battery.png)|18650 Battery|1|https://amzn.to/3APuPyO|
