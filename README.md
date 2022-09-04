@@ -8,6 +8,9 @@ specific amount of rain. Count the tips, you'll know how much rain has fallen.
 
 ![Rain Gauge Electronics](images/base-electronics.jpg)
 
+[![Rain Gauge Working](https://img.youtube.com/vi/XX34wHzLibE/0.jpg)](http://www.youtube.com/watch?v=XX34wHzLibE)
+
+
 ## Links
 ||Desc|Link|
 |---|---|---|
