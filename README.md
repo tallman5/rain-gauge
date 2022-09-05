@@ -1,14 +1,13 @@
-
-**Note:** This is still a draft
-
 ## Overview
 Weather geek? Maker? These are fun. A tipping bucket rain gauge funnels 
 rain into a cup which tips and empties repeatedly during a rain storm. Each "tip" correlates to a 
 specific amount of rain. Count the tips, you'll know how much rain has fallen.
 
-![Rain Gauge Electronics](images/base-electronics.jpg)
+<!-- <iframe width="560" height="315" src="https://www.youtube.com/embed/XX34wHzLibE" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe> -->
 
-<!-- this is a comment -->
+[![Video](https://img.youtube.com/vi/XX34wHzLibE/maxresdefault.jpg)](https://www.youtube.com/watch?v=XX34wHzLibE)
+
+![Rain Gauge Electronics](images/base-electronics.jpg)
 
 ## Links
 ||Desc|Link|
