@@ -34,7 +34,7 @@ String baseApiUrl = BASE_API_URL;
 
 String tokenUrl = "https://login.microsoftonline.com/" + tenantId + "/oauth2/v2.0/token";
 String tokenBody = "grant_type=client_credentials&client_id=" + clientId + "&client_secret=" + clientSecret + "&scope=" + scope;
-String pulseUrl = baseApiUrl + "/kpis/" + hostName + "/pulse";
+//String pulseUrl = baseApiUrl + "/kpis/" + hostName + "/pulse";
 String dataUrl = baseApiUrl + "/kpis/" + hostName + "/epochs";
 String voltageUrl = baseApiUrl + "/kpis/" + hostName + "/voltage";
 
