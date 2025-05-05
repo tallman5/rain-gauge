@@ -1,1 +1,30 @@
-src/rain-gauge/arduino_secrets.h
+# PlatformIO build and config folders
+.pio/
+.vscode/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+
+# IntelliSense cache
+*.code-workspace
+
+# Compiled binaries
+*.elf
+*.bin
+*.hex
+
+# Mac/Linux artifacts
+.DS_Store
+*.orig
+
+# Windows artifacts
+Thumbs.db
+
+# Arduino-like libraries
+libdeps/
+
+# Local user secrets
+src/secrets.h
