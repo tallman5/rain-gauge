@@ -128,7 +128,7 @@ void postEpochs()
   json += "]}";
 
   int httpCode = postJsonWithAuth("/kpis/epochs", json);
-  if (httpCode > 0)
+  if (httpCode >= 200 && httpCode < 300)
   {
     epochs.clear();
   }
@@ -294,10 +294,11 @@ void loop()
   postEpochs();
 
   counter++;
-  if (counter >= 5)
+  // 120 minutes
+  if (counter >= 24)
   {
-    counter = 0;
+    counter = 0; 
   }
 
-  delay(60000);
+  delay(1000 * 60 * 5); // 5 minutes
 }
