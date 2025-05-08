@@ -16,10 +16,12 @@ const char *baseApiUrl = BASE_API_URL;
 const char *iotName = IOT_NAME;
 const char *iotPassword = IOT_PASSWORD;
 
-String accessToken;
-int counter = 0;
-std::list<long> epochs;
 float voltCalibration = 0.382;
+long lastPostTime = 0;
+String accessToken;
+std::list<long> epochs;
+String bulkUploadEndpoint = "/kpis/" + String(hostName);
+int counter = 0;
 
 void turnOffWifi()
 {
@@ -83,18 +85,10 @@ int postJsonWithAuth(const String &endpoint, const String &jsonBody)
   https.addHeader("Content-Type", "application/json");
   https.addHeader("Authorization", "Bearer " + accessToken);
 
-  Serial.println("Posting:");
-  Serial.println(jsonBody);
-
   int httpCode = https.POST(jsonBody);
   Serial.printf("POST to %s response code: %d\n", endpoint.c_str(), httpCode);
 
-  if (httpCode > 0)
-  {
-    // String payload = https.getString();
-    // Serial.println("Response: " + payload);
-  }
-  else
+  if (httpCode <= 0)
   {
     Serial.printf("Failed to POST to %s, error: %s\n", endpoint.c_str(), https.errorToString(httpCode).c_str());
     String errorPayload = https.getString();
@@ -105,86 +99,50 @@ int postJsonWithAuth(const String &endpoint, const String &jsonBody)
   return httpCode;
 }
 
-void postEpochs()
+String createKpiJson(const String &keyName, float keyValue, long epoch)
 {
-  if (epochs.empty())
-    return;
-
-  turnOnWifi();
-
   String json = "{";
-  json += "\"deviceName\":\"" + String(hostName) + "\",";
-  json += "\"keyName\":\"tip\",";
-  json += "\"keyValue\":1,";
-  json += "\"epochs\":[";
+  json += "\"keyName\":\"" + keyName + "\",";
+  json += "\"keyValue\":" + String(keyValue, 2) + ",";
+  json += "\"epoch\":" + String(epoch);
+  json += "}";
+  return json;
+}
 
-  for (auto it = epochs.begin(); it != epochs.end();)
+void postKpis(bool includeTips)
+{
+  int sensorValue = analogRead(VOLTAGE_PIN);
+  float voltage = ((sensorValue * (3.3 / 1024.0)) * 2) + voltCalibration;
+  int battPercent = (voltage - 2.5) * 100 / (4.2 - 2.5);
+  long now = time(nullptr);
+
+  String json = "{ \"kpis\": [";
+  bool first = true;
+
+  if (includeTips)
   {
-    json += String(*it);
-    if (++it != epochs.end())
-      json += ",";
+    for (auto it = epochs.begin(); it != epochs.end(); ++it)
+    {
+      if (!first)
+        json += ",";
+      json += createKpiJson("tip", 1, *it);
+      first = false;
+    }
   }
 
-  json += "]}";
+  if (!first)
+    json += ",";
+  json += createKpiJson("volt", voltage, now);
+  json += "," + createKpiJson("volt-pin", sensorValue, now);
+  json += "," + createKpiJson("batt", battPercent, now);
 
-  int httpCode = postJsonWithAuth("/kpis/epochs", json);
-  if (httpCode >= 200 && httpCode < 300)
+  json += "] }";
+
+  int httpCode = postJsonWithAuth(bulkUploadEndpoint, json);
+  if (httpCode >= 200 && httpCode < 300 && includeTips)
   {
     epochs.clear();
   }
-
-  turnOffWifi();
-}
-
-void postVoltage()
-{
-  // For ESP8266 from https://amzn.to/3RfLW3z, A0 is
-  // 0 to 1024 for volts of 0 to 3.3
-  // Voltage divider created with two 100k resistors
-  int sensorValue = analogRead(VOLTAGE_PIN);
-  Serial.print("Voltage Sensor Value: ");
-  Serial.println(sensorValue);
-
-  float voltage = 0;
-  int battPercent = 0;
-
-  if (sensorValue > 0)
-  {
-    voltage = ((sensorValue * (3.3 / 1024.0)) * 2) + voltCalibration;
-    battPercent = (voltage - 2.5) * 100 / (4.2 - 2.5);
-  }
-
-  long now = time(nullptr);
-
-  // Post voltage KPI
-  String voltageJson = "{";
-  voltageJson += "\"id\":\"00000000-0000-0000-0000-000000000000\",";
-  voltageJson += "\"keyName\":\"volt\",";
-  voltageJson += "\"keyValue\":" + String(voltage, 2) + ",";
-  voltageJson += "\"deviceName\":\"" + String(hostName) + "\",";
-  voltageJson += "\"timestamp\":" + String(now);
-  voltageJson += "}";
-  postJsonWithAuth("/kpis", voltageJson);
-
-  // Post voltage pin value KPI
-  String voltagePinJson = "{";
-  voltagePinJson += "\"id\":\"00000000-0000-0000-0000-000000000000\",";
-  voltagePinJson += "\"keyName\":\"volt-pin\",";
-  voltagePinJson += "\"keyValue\":" + String(sensorValue) + ",";
-  voltagePinJson += "\"deviceName\":\"" + String(hostName) + "\",";
-  voltagePinJson += "\"timestamp\":" + String(now);
-  voltagePinJson += "}";
-  postJsonWithAuth("/kpis", voltagePinJson);
-
-  // Post battery percent KPI
-  String battJson = "{";
-  battJson += "\"id\":\"00000000-0000-0000-0000-000000000000\",";
-  battJson += "\"keyName\":\"batt\",";
-  battJson += "\"keyValue\":" + String(battPercent) + ",";
-  battJson += "\"deviceName\":\"" + String(hostName) + "\",";
-  battJson += "\"timestamp\":" + String(now);
-  battJson += "}";
-  postJsonWithAuth("/kpis", battJson);
 }
 
 void signIn(const String &username, const String &password, bool rememberMe)
@@ -196,7 +154,7 @@ void signIn(const String &username, const String &password, bool rememberMe)
   }
 
   std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
-  client->setInsecure(); // Accept self-signed / invalid certificates for local dev
+  client->setInsecure();
 
   HTTPClient https;
   if (!https.begin(*client, String(baseApiUrl) + "/iam/signin"))
@@ -224,7 +182,7 @@ void signIn(const String &username, const String &password, bool rememberMe)
     else if (doc["data"]["accessToken"].is<String>())
     {
       accessToken = doc["data"]["accessToken"].as<String>();
-      Serial.println(accessToken);
+      Serial.println("Signing in succeeded.");
     }
     else
     {
@@ -255,7 +213,6 @@ void updateClock()
     retries++;
   }
 
-  Serial.println();
   if (now >= 8 * 3600 * 2)
   {
     Serial.println("done.");
@@ -263,6 +220,7 @@ void updateClock()
   }
   else
   {
+    Serial.println();
     Serial.println("Failed to sync time.");
   }
 }
@@ -271,34 +229,33 @@ void setup()
 {
   delay(5000);
   Serial.begin(115200);
+
   turnOnWifi();
   updateClock();
+  turnOffWifi();
 
   pinMode(INTERRUPT_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), hallChanged, CHANGE);
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
-  turnOffWifi();
 }
 
 void loop()
 {
-  if (counter == 0)
+  if (!epochs.empty() || counter == 0)
   {
     turnOnWifi();
     signIn(iotName, iotPassword, false);
-    postVoltage();
+    postKpis(true);
     turnOffWifi();
+    counter = 0;
   }
 
-  postEpochs();
+  delay(60 * 1000);
 
   counter++;
-  // 120 minutes
-  if (counter >= 24)
+  if (counter > 120)
   {
-    counter = 0; 
+    counter = 0;
   }
-
-  delay(1000 * 60 * 5); // 5 minutes
 }
