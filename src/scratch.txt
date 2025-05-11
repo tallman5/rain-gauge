@@ -16,6 +16,7 @@ const char *baseApiUrl = BASE_API_URL;
 const char *iotName = IOT_NAME;
 const char *iotPassword = IOT_PASSWORD;
 
+float voltCalibration = 0.382;
 long lastPostTime = 0;
 String accessToken;
 std::list<long> epochs;
@@ -24,48 +25,28 @@ int counter = 0;
 
 void turnOffWifi()
 {
-  Serial.print("Disconnecting WiFi...");
-
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    Serial.println("already done.");
-    return;
-  }
-
+  Serial.print("Disconnecting WiFi..");
   WiFi.mode(WIFI_OFF);
-
   while (WiFi.status() == WL_CONNECTED)
   {
     Serial.print(".");
     delay(1000);
   }
-
-  Serial.println("done.");
+  Serial.println("done");
 }
 
 void turnOnWifi()
 {
-  Serial.print("Connecting to WiFi...");
-
-  if (WiFi.status() == WL_CONNECTED)
+  Serial.print("Connecting to WiFi.");
+  WiFi.hostname(hostName);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, wifiPassword);
+  while (WiFi.status() != WL_CONNECTED)
   {
-    Serial.println("already done.");
+    delay(1000);
+    Serial.print(".");
   }
-  else
-  {
-    WiFi.hostname(hostName);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, wifiPassword);
-
-    while (WiFi.status() != WL_CONNECTED)
-    {
-      delay(1000);
-      Serial.print(".");
-    }
-
-    Serial.println("done");
-  }
-
+  Serial.println("done");
   Serial.println("IP address: " + WiFi.localIP().toString());
   Serial.println("MAC address: " + WiFi.macAddress());
 }
@@ -78,6 +59,7 @@ IRAM_ATTR void hallChanged()
     long now = time(nullptr);
     epochs.push_back(now);
     digitalWrite(LED_BUILTIN, LOW);
+    Serial.println("Hall effect sensor triggered.");
   }
   else
   {
@@ -130,17 +112,8 @@ String createKpiJson(const String &keyName, float keyValue, long epoch)
 void postKpis(bool includeTips)
 {
   int sensorValue = analogRead(VOLTAGE_PIN);
-  Serial.print("Pin val: ");
-  Serial.println(sensorValue);
-
-  float voltage = 19.83 + (sensorValue - 363) * (20.6 - 19.83) / (370 - 363);
-  Serial.print("Volt: ");
-  Serial.println(voltage);
-
-  int battPercent = (voltage - 17) * 100 / (20.2 - 17);
-  Serial.print("Batt: ");
-  Serial.println(battPercent);
-
+  float voltage = ((sensorValue * (3.3 / 1024.0)) * 2) + voltCalibration;
+  int battPercent = (voltage - 2.5) * 100 / (4.2 - 2.5);
   long now = time(nullptr);
 
   String json = "{ \"kpis\": [";
@@ -174,8 +147,6 @@ void postKpis(bool includeTips)
 
 void signIn(const String &username, const String &password, bool rememberMe)
 {
-  Serial.print("Getting access token...");
-
   if (WiFi.status() != WL_CONNECTED)
   {
     Serial.println("WiFi not connected. Cannot sign in.");
@@ -191,8 +162,8 @@ void signIn(const String &username, const String &password, bool rememberMe)
     Serial.println("Unable to connect to server.");
     return;
   }
-
   https.addHeader("Content-Type", "application/json");
+
   String body = "{\"username\":\"" + username + "\",\"password\":\"" + password + "\",\"rememberMe\":" + (rememberMe ? "true" : "false") + "}";
   int httpCode = https.POST(body);
 
@@ -205,13 +176,13 @@ void signIn(const String &username, const String &password, bool rememberMe)
 
     if (error)
     {
-      Serial.println("JSON parsing failed:");
+      Serial.print("JSON parsing failed: ");
       Serial.println(error.f_str());
     }
     else if (doc["data"]["accessToken"].is<String>())
     {
       accessToken = doc["data"]["accessToken"].as<String>();
-      Serial.println("done.");
+      Serial.println("Signing in succeeded.");
     }
     else
     {
@@ -251,8 +222,6 @@ void updateClock()
   {
     Serial.println();
     Serial.println("Failed to sync time, reseting...");
-    delay(1000);
-    ESP.restart();
   }
 }
 
@@ -263,6 +232,7 @@ void setup()
 
   turnOnWifi();
   updateClock();
+  turnOffWifi();
 
   pinMode(INTERRUPT_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), hallChanged, CHANGE);
@@ -277,15 +247,15 @@ void loop()
     turnOnWifi();
     signIn(iotName, iotPassword, false);
     postKpis(true);
-    // turnOffWifi();
+    turnOffWifi();
     counter = 0;
   }
+
+  delay(60 * 1000);
 
   counter++;
   if (counter > 120)
   {
     counter = 0;
   }
-
-  delay(60 * 1000);
 }
